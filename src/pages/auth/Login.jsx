@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function Login() {
-  const { signIn, signUp, signInWithGoogle, signInWithMagicLink, resetPassword } = useAuth();
+  const { signIn, signUp, signInWithGoogle, signInWithMagicLink, resetPassword, authError, clearAuthError } = useAuth();
 
   const [mode, setMode] = useState('signin'); // 'signin' | 'signup'
   const [fullName, setFullName] = useState('');
@@ -27,6 +27,7 @@ export default function Login() {
     setMode(m);
     setError('');
     setInfo('');
+    clearAuthError();
     setPassword('');
     setConfirmPassword('');
   }
@@ -35,6 +36,7 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setInfo('');
+    clearAuthError();
 
     if (!validateEmail(email)) { setError('Please enter a valid email address'); return; }
 
@@ -67,6 +69,7 @@ export default function Login() {
   async function handleGoogle() {
     setError('');
     setInfo('');
+    clearAuthError();
     setLoading(true);
     try {
       await signInWithGoogle();
@@ -118,6 +121,7 @@ export default function Login() {
         </div>
 
         {error && <div className="alert alert-danger">{error}</div>}
+        {!error && authError && <div className="alert alert-danger">{authError}</div>}
         {info && <div className="alert alert-success">{info}</div>}
 
         {/* Mode toggle */}

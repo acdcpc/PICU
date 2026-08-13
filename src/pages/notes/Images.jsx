@@ -5,6 +5,56 @@ import { ArrowLeft, Upload } from 'lucide-react';
 
 const IMG_TYPES = ['Radiology', 'Ultrasound', 'Clinical Photo', 'ECG', 'Other'];
 
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+// Client-side resize/compress so any photo fits under the 500 KB storage limit.
+async function compressImageToMaxKB(file, maxKB = 500) {
+  const maxBytes = maxKB * 1000; // match the app's 500 KB = 500,000-byte limit
+  if (file.size <= maxBytes) return file;
+
+  const img = await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Could not read this image'));
+    image.src = url;
+  });
+
+  const baseName = (file.name || 'image.jpg').replace(/\.[^.]+$/, '') + '.jpg';
+
+  const render = (w, h, quality) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvasToBlob(canvas, 'image/jpeg', quality);
+  };
+
+  // Progressively shrink dimensions + quality until it fits under the cap.
+  for (const maxDim of [1600, 1200, 900, 640, 480, 360]) {
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    for (const q of [0.82, 0.7, 0.55, 0.4, 0.3]) {
+      const blob = await render(w, h, q);
+      if (blob && blob.size <= maxBytes) {
+        URL.revokeObjectURL(img.src);
+        return new File([blob], baseName, { type: 'image/jpeg' });
+      }
+    }
+  }
+
+  // Last resort: tiny thumbnail.
+  const blob = await render(320, 320, 0.25);
+  URL.revokeObjectURL(img.src);
+  return new File([blob], baseName, { type: 'image/jpeg' });
+}
+
 export default function Images() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -26,27 +76,34 @@ export default function Images() {
 
   async function handleUpload(e) {
     e.preventDefault();
-    const file = e.target.imgFile?.files?.[0];
-    if (!file) return;
-    if (file.size > 500000) { alert('File too large — max 500 KB'); return; }
+    const original = e.target.imgFile?.files?.[0];
+    if (!original) return;
 
     setUploading(true);
-    const filePath = `patients/${id}/${Date.now()}_${file.name}`;
-    const { error: uploadError } = await supabase.storage.from('patient-images').upload(filePath, file);
-    if (uploadError) { alert('Upload error: ' + uploadError.message); setUploading(false); return; }
+    try {
+      // Resize/compress to max 500 KB before uploading.
+      const file = await compressImageToMaxKB(original, 500);
 
-    const { data: urlData } = supabase.storage.from('patient-images').getPublicUrl(filePath);
-    const url = urlData?.publicUrl;
+      const filePath = `patients/${id}/${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage.from('patient-images').upload(filePath, file);
+      if (uploadError) { alert('Upload error: ' + uploadError.message); setUploading(false); return; }
 
-    if (url) {
-      await supabase.from('patient_images').insert({
-        patient_id: id, storage_url: url, description: desc, type, file_name: file.name,
-      });
+      const { data: urlData } = supabase.storage.from('patient-images').getPublicUrl(filePath);
+      const url = urlData?.publicUrl;
+
+      if (url) {
+        await supabase.from('patient_images').insert({
+          patient_id: id, storage_url: url, description: desc, type, file_name: file.name,
+        });
+      }
+
+      e.target.reset(); setDesc('');
+      loadImages();
+    } catch (err) {
+      alert('Could not process image: ' + (err.message || 'unknown error'));
+    } finally {
+      setUploading(false);
     }
-
-    e.target.reset(); setDesc('');
-    setUploading(false);
-    loadImages();
   }
 
   return (
@@ -58,7 +115,7 @@ export default function Images() {
         <div className="card-head"><h4>Upload Image</h4></div>
         <div className="card-body">
           <form onSubmit={handleUpload}>
-            <div className="form-group"><label className="form-label">File (max 500 KB)</label>
+            <div className="form-group"><label className="form-label">File (auto-resized to max 500 KB)</label>
               <input className="form-input" type="file" name="imgFile" accept="image/*" /></div>
             <div className="form-group"><label className="form-label">Type</label>
               <select className="form-select" value={type} onChange={e => setType(e.target.value)}>
@@ -67,7 +124,7 @@ export default function Images() {
             <div className="form-group"><label className="form-label">Description</label>
               <input className="form-input" value={desc} onChange={e => setDesc(e.target.value)} /></div>
             <button type="submit" className="btn btn-teal btn-block" disabled={uploading}>
-              <Upload size={16} /> {uploading ? 'Uploading…' : 'Upload'}
+              <Upload size={16} /> {uploading ? 'Processing…' : 'Upload'}
             </button>
           </form>
         </div>

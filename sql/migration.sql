@@ -225,6 +225,14 @@ CREATE POLICY "dlib_update" ON public.drug_library FOR UPDATE USING (public.is_a
 CREATE POLICY "dlib_delete" ON public.drug_library FOR DELETE USING (public.is_admin());
 
 -- ============================================================
+--  STORAGE POLICIES
+-- ============================================================
+-- patient-images bucket is public (read). Uploads still require an explicit policy.
+CREATE POLICY "patient_images_upload" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'patient-images');
+
+-- ============================================================
 --  TRIGGERS
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
