@@ -1,10 +1,27 @@
 import { useState, useEffect } from 'react';
 import supabase from '../../lib/supabase';
 import * as XLSX from 'xlsx';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import { Download } from 'lucide-react';
 
-function downloadExcel(wb, filename) {
-  XLSX.writeFile(wb, filename);
+// On native (Android/iOS) the browser download API doesn't work, so we write the
+// .xlsx to the app's Documents folder and open the native share sheet instead.
+async function downloadExcel(wb, filename) {
+  try {
+    const data = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+    if (Capacitor.isNativePlatform()) {
+      const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      await Filesystem.writeFile({ path: safe, data, directory: Directory.Documents });
+      const { uri } = await Filesystem.getUri({ path: safe, directory: Directory.Documents });
+      await Share.share({ url: uri, title: filename });
+    } else {
+      XLSX.writeFile(wb, filename);
+    }
+  } catch (err) {
+    alert('Export failed: ' + (err && err.message ? err.message : err));
+  }
 }
 
 export default function ExportCenter() {
@@ -30,7 +47,7 @@ export default function ExportCenter() {
       'Adm.Wt': p.admission_weight, Diagnosis: p.diagnosis,
       Admitted: p.admission_date, 'FO%': p.latest_fo,
     }))), 'Patients');
-    downloadExcel(wb, `OurPICU_All_Patients_${today}.xlsx`);
+    await downloadExcel(wb, `OurPICU_All_Patients_${today}.xlsx`);
     setExporting(false);
   }
 
@@ -83,7 +100,7 @@ export default function ExportCenter() {
     } catch (e) { console.error(e); }
 
     const cleanDiag = (pt.diagnosis || 'Patient').replace(/[^a-zA-Z0-9-_ ]/g, '_');
-    downloadExcel(wb, `Bed_${pt.bed_number}_${cleanDiag}_${today}.xlsx`);
+    await downloadExcel(wb, `Bed_${pt.bed_number}_${cleanDiag}_${today}.xlsx`);
     setExporting(false);
   }
 
@@ -106,7 +123,7 @@ export default function ExportCenter() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
       allFB.length ? allFB : [{ Note: 'No data records found for this date range.' }]
     ), 'Fluid Balance');
-    downloadExcel(wb, `OurPICU_Range_${from}_to_${to}.xlsx`);
+    await downloadExcel(wb, `OurPICU_Range_${from}_to_${to}.xlsx`);
     setExporting(false);
   }
 
